@@ -1,6 +1,8 @@
 # gzuk.app
 
-Landing page for [그려적어 (GZUK)](https://github.com/leevigong/gzuk) — Next.js 14 + Tailwind, deployed on Vercel.
+![그려적어 GZUK](https://github.com/user-attachments/assets/b5a7e55e-d7f4-42a4-b8c2-0e1ae854a63e)
+
+[🔗 Landing page for 그려적어 (GZUK)](https://gzuk-app.vercel.app/)
 
 ## Setup
 

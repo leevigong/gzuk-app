@@ -65,7 +65,7 @@ function Nav({ lang, setLang }: { lang: Lang; setLang: (l: Lang) => void }) {
             </span>
             <span className="font-normal">적어</span>
           </span>
-          <span className="tracking-widest text-[11px] font-bold hidden sm:inline">GZUK</span>
+          <span className="tracking-widest text-[11px] font-bold">GZUK</span>
         </a>
         {/* Mobile: only Download + lang toggle. The rest is reachable
             by scroll, so hiding them keeps the bar uncluttered. */}
@@ -301,17 +301,34 @@ const STATIC_ANNOTATIONS: { id: StaticAnnotationId; vbPoints: Pt[] }[] = [
 ];
 
 function DemoScene({ lang }: { lang: Lang }) {
-  // Desktop-only interactive drawing. Touch devices get the static demo
-  // because the slide is too small on phones for a satisfying try-it-yourself,
-  // and we'd rather show a clean composed mock there.
-  const [isDesktop, setIsDesktop] = useState(false);
+  // Two interaction modes:
+  //  - Desktop (fine pointer + wide enough): drawing is always live, tool
+  //    swap via the tiny toolbar hotspots feels natural with a mouse.
+  //  - Mobile (coarse pointer): drawing is OFF by default so the page can
+  //    scroll past the demo. A "✏️ 그려보기" button on the slide enters
+  //    drawing mode, where a bigger bottom bar handles tool swap + exit.
+  const [isDesktop,    setIsDesktop]    = useState(false);
+  const [isMobileTouch, setIsMobileTouch] = useState(false);
+  const [mobileDrawing, setMobileDrawing] = useState(false);
   useEffect(() => {
-    const mq = window.matchMedia("(pointer: fine) and (min-width: 768px)");
-    const update = () => setIsDesktop(mq.matches);
+    const mqDesktop = window.matchMedia("(any-pointer: fine) and (min-width: 768px)");
+    const mqTouch   = window.matchMedia("(any-pointer: coarse)");
+    const update = () => {
+      const desk = mqDesktop.matches;
+      setIsDesktop(desk);
+      setIsMobileTouch(mqTouch.matches && !desk);
+    };
     update();
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
+    mqDesktop.addEventListener("change", update);
+    mqTouch.addEventListener("change", update);
+    return () => {
+      mqDesktop.removeEventListener("change", update);
+      mqTouch.removeEventListener("change", update);
+    };
   }, []);
+  // Whether the canvas should accept pointer events right now.
+  const drawingActive = isDesktop || mobileDrawing;
+  const showCanvas    = isDesktop || isMobileTouch;
 
   // Only pen and eraser are wired up — the rest of the toolbar is
   // decorative ("install for the full set"). Toolbar image swaps to mirror
@@ -489,21 +506,71 @@ function DemoScene({ lang }: { lang: Lang }) {
             )}
           </svg>
 
-          {isDesktop && (
+          {showCanvas && (
             <DrawingOverlay
               lang={lang}
               tool={tool}
               staticAnnotations={visibleStatic}
               onEraseStatic={eraseStatic}
               onReset={resetStatic}
+              interactive={drawingActive}
+              showHint={!isMobileTouch}
             />
+          )}
+
+          {/* Mobile: enter-drawing-mode CTA. Compact pill placed near the
+              bottom of the slide so it doesn't cover the chart. Matches
+              the desktop hint's black pill so both read as "drawing
+              affordance". */}
+          {isMobileTouch && !mobileDrawing && (
+            <button
+              type="button"
+              onClick={() => setMobileDrawing(true)}
+              className="absolute left-1/2 bottom-2.5 -translate-x-1/2 z-20 px-3 py-1.5 rounded-full bg-black/85 backdrop-blur text-white text-[11px] font-semibold shadow-[0_4px_14px_-4px_rgba(0,0,0,0.4)] active:scale-95 transition"
+            >
+              그려보기 ✏️
+            </button>
+          )}
+
+          {/* Mobile: in-drawing control bar. Compact, sits in the same
+              bottom slot as the start CTA so layout doesn't jump. */}
+          {isMobileTouch && mobileDrawing && (
+            <div className="absolute left-1/2 bottom-2.5 -translate-x-1/2 z-20 flex items-center gap-0.5 px-0.5 py-0.5 rounded-full bg-black/85 backdrop-blur shadow-[0_4px_14px_-4px_rgba(0,0,0,0.45)] text-[10px] text-white">
+              <button
+                type="button"
+                onClick={() => setTool("pen")}
+                className={`px-2 py-1 rounded-full transition ${
+                  tool === "pen" ? "bg-white/20" : "opacity-70"
+                }`}
+              >
+                ✏️ 펜
+              </button>
+              <button
+                type="button"
+                onClick={() => setTool("eraser")}
+                className={`px-2 py-1 rounded-full transition ${
+                  tool === "eraser" ? "bg-white/20" : "opacity-70"
+                }`}
+              >
+                🧽 지우개
+              </button>
+              <span className="w-px h-3 bg-white/25 mx-0.5" />
+              <button
+                type="button"
+                onClick={() => setMobileDrawing(false)}
+                className="px-2 py-1 rounded-full opacity-90 active:bg-white/10 transition"
+              >
+                ✓ 완료
+              </button>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Floating GZUK toolbar — actual screenshot for visual fidelity. Only
-          pen and eraser hotspots are clickable; the rest is decorative and
-          nudges visitors toward the install CTA. */}
+      {/* Floating GZUK toolbar — actual screenshot for visual fidelity. On
+          desktop the pen/eraser hotspots are clickable; on mobile the
+          toolbar is purely decorative (mobile uses the bottom control bar
+          instead because the icons are too small for tap targets). */}
       <ToolbarImage tool={tool} setTool={setTool} interactive={isDesktop} />
     </div>
   );
@@ -598,12 +665,21 @@ function DrawingOverlay({
   staticAnnotations,
   onEraseStatic,
   onReset,
+  interactive,
+  showHint,
 }: {
   lang: Lang;
   tool: "pen" | "eraser";
   staticAnnotations: { id: StaticAnnotationId; vbPoints: Pt[] }[];
   onEraseStatic: (id: StaticAnnotationId) => void;
   onReset: () => void;
+  // When false (mobile, drawing mode off), the canvas is render-only:
+  // pointer events pass through so the page can scroll, hint and RESET
+  // hide so the slide reads as the static composed mock.
+  interactive: boolean;
+  // Mobile already shows a "✏️ 그려보기" CTA + bottom control bar, so the
+  // big "여기에 직접 그려보세요" pill would be redundant noise there.
+  showHint: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawingRef = useRef(false);
@@ -833,8 +909,13 @@ function DrawingOverlay({
         ref={canvasRef}
         className="absolute inset-0 w-full h-full"
         style={{
-          cursor: tool === "eraser" ? "cell" : "crosshair",
-          touchAction: "none",
+          cursor: interactive
+            ? tool === "eraser"
+              ? "cell"
+              : "crosshair"
+            : "default",
+          touchAction: interactive ? "none" : "auto",
+          pointerEvents: interactive ? "auto" : "none",
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -842,15 +923,15 @@ function DrawingOverlay({
         onPointerCancel={onPointerUp}
         onPointerLeave={onPointerUp}
       />
-      {!hasDrawn && (
+      {interactive && showHint && !hasDrawn && (
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 px-6 sm:px-7 py-3 sm:py-3.5 rounded-full bg-black/85 backdrop-blur text-white text-[16px] sm:text-[18px] font-semibold tracking-wide pointer-events-none shadow-[0_12px_40px_rgba(0,0,0,0.4)] gzuk-breathe">
           {t(strings.demo.hint, lang)}
         </div>
       )}
-      {hasDrawn && (
+      {interactive && hasDrawn && (
         <button
           onClick={clear}
-          className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-full bg-white/90 backdrop-blur text-[11px] text-black/80 border border-black/10 hover:bg-white shadow-sm transition"
+          className="absolute top-1.5 right-1.5 sm:top-2.5 sm:right-2.5 px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-white/90 backdrop-blur text-[9px] sm:text-[11px] text-black/80 border border-black/10 hover:bg-white shadow-sm transition"
         >
           {t(strings.demo.clear, lang)}
         </button>
@@ -897,20 +978,20 @@ function Download({ lang }: { lang: Lang }) {
           {t(strings.download.eyebrow, lang)}
         </p>
 
-        <p className="opacity-55 mb-4 text-[15px]">{t(strings.download.brew_label, lang)}</p>
+        <p className="opacity-55 mb-3 sm:mb-4 text-[13px] sm:text-[15px]">{t(strings.download.brew_label, lang)}</p>
         <CopyableCommand cmd={BREW_CMD} />
 
-        <p className="mt-14 mb-4 opacity-55 text-[15px]">{t(strings.download.or, lang)}</p>
+        <p className="mt-10 sm:mt-14 mb-3 sm:mb-4 opacity-55 text-[13px] sm:text-[15px]">{t(strings.download.or, lang)}</p>
         <a
           href={RELEASE_ZIP}
           target="_blank"
           rel="noreferrer"
-          className="inline-block px-7 py-4 rounded-full border border-black/15 dark:border-white/20 text-[16px] hover:bg-black/5 dark:hover:bg-white/5 transition"
+          className="inline-block px-5 sm:px-7 py-2.5 sm:py-4 rounded-full border border-black/15 dark:border-white/20 text-[13px] sm:text-[16px] hover:bg-black/5 dark:hover:bg-white/5 transition"
         >
           GitHub Releases →
         </a>
 
-        <p className="mt-14 text-[13px] opacity-45 leading-relaxed max-w-xl mx-auto whitespace-pre-line">
+        <p className="mt-10 sm:mt-14 text-[11px] sm:text-[13px] opacity-45 leading-relaxed max-w-xl mx-auto whitespace-pre-line">
           {t(strings.download.note, lang)}
         </p>
       </div>
@@ -926,12 +1007,12 @@ function CopyableCommand({ cmd }: { cmd: string }) {
     setTimeout(() => setCopied(false), 1500);
   };
   return (
-    <div className="inline-flex items-center gap-3 px-5 py-3.5 rounded-2xl bg-black/[0.05] dark:bg-white/[0.06] text-sm">
-      <span className="opacity-40">$</span>
+    <div className="inline-flex items-center gap-2 sm:gap-3 px-3.5 sm:px-5 py-3 sm:py-3.5 rounded-2xl bg-black/[0.05] dark:bg-white/[0.06] text-[13px] sm:text-sm whitespace-nowrap max-w-full">
+      <span className="opacity-40 shrink-0">$</span>
       <span>{cmd}</span>
       <button
         onClick={onCopy}
-        className="opacity-50 hover:opacity-100 text-[11px] px-2.5 py-1 rounded-full border border-black/15 dark:border-white/15 transition"
+        className="shrink-0 opacity-50 hover:opacity-100 text-[10px] sm:text-[11px] px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full border border-black/15 dark:border-white/15 transition"
       >
         {copied ? "✓" : "copy"}
       </button>
